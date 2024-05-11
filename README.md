@@ -4,3 +4,6 @@ MAke sure 32-bit or 64-bit API monitor is already running and is listing running
 Use AutoAttachAPIMon_x64 c*.exe to monitor all new 64-bit processes matching the wildcard pattern
 Use AutoAttachAPIMon_x86 c*.exe to monitor all new 32-bit processes matchingi the widcard pattern
 
+There is some delay before process monitoring starts, but much quicker than manually.
+
+While tools like TTD / Dtrace etc have eliminated many uses of API Mon, some things are just faster to work out with this tool.
