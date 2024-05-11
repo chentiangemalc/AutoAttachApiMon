@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <conio.h>
+
 #include "ProcessCreatedEventDispatcher.h"
 
 #pragma comment(lib, "user32.lib")
@@ -15,13 +16,15 @@ int GetListViewItemCount(HWND hwndListView);
 int GetListViewColumnCount(HWND hwndListView);
 std::wstring GetListViewItemText(HWND hwndListView, int itemIndex, int subItemIndex);
 bool WildcardMatch(const std::wstring& str, const std::wstring& pattern);
-
+bool EnableDebugPrivilege();
+void BringWindowToForeground(HWND hWnd);
 // Global variables
 HWND g_hListView = nullptr;
+HWND g_hwndMain = nullptr;
 std::wstring processFilter;
 
 int main()
-{
+{   
     LPWSTR commandLine = GetCommandLineW();
     int argc;
     LPWSTR* argv = CommandLineToArgvW(commandLine, &argc);
@@ -34,43 +37,58 @@ int main()
     processFilter = std::wstring(argv[1]);
     LocalFree(argv);
 
+    // needed to monitor when running elevated
+    EnableDebugPrivilege();
+
     // Find the main window
     #ifdef _WIN64 // Check if building for 64-bit architecture
-        HWND hwndMain = FindWindow(NULL, L"Monitoring - API Monitor v2 64-bit (Administrator)");
-        if (!hwndMain)
+        g_hwndMain = FindWindow(NULL, L"Monitoring - API Monitor v2 64-bit (Administrator)");
+        if (!g_hwndMain)
         {
-            hwndMain = FindWindow(NULL, L"Monitoring - API Monitor v2 64-bit");
+            g_hwndMain = FindWindow(NULL, L"Monitoring - API Monitor v2 64-bit");
         }
     #else
-        HWND hwndMain = FindWindow(NULL, L"Monitoring - API Monitor v2 32-bit (Administrator)");
-        if (!hwndMain)
+        g_hwndMain = FindWindow(NULL, L"Monitoring - API Monitor v2 32-bit (Administrator)");
+        if (!g_hwndMain)
         {
-            hwndMain = FindWindow(NULL, L"Monitoring - API Monitor v2 32-bit");
+            g_hwndMain = FindWindow(NULL, L"Monitoring - API Monitor v2 32-bit");
         }
     #endif
 
-    if (!hwndMain) {
+    if (!g_hwndMain) {
         std::wcerr << L"API Monitor 64-bit not running!" << std::endl;
         return 1;
     }
 
-    HWND hwndRunningProcesses = FindWindowEx(hwndMain, NULL, NULL, L"Running Processes");
+    HWND hwndRunningProcesses = FindWindowEx(g_hwndMain, NULL, NULL, L"Running Processes");
     if (!hwndRunningProcesses)
     {
         std::wcerr << L"Running processes not found - make sure monitoring is on!" << std::endl;
         return 1;
     }
+
     g_hListView = FindChildWindowByClass(hwndRunningProcesses, L"SysListView32");
+
 
     if (!g_hListView) {
         std::wcerr << L"SysListView32 control not found" << std::endl;
         return 1;
     }
 
-    std::wcout << L"Current running processes in API monitor ...";
+    
 
     // Extract table info
+
     int columnCount = GetListViewColumnCount(g_hListView);
+
+    if (columnCount == 0)
+    {
+        std::wcout << L"Unable to detect any running processes in API Monitor. If API monitor is running as admin, make sure this is running as admin too." << std::endl;
+        return 1;
+    }
+    
+    std::wcout << L"Current running processes in API monitor ...";
+
     std::wcout << L"ColumnCount = " << columnCount << std::endl;
 
     int rowCount = GetListViewItemCount(g_hListView);
@@ -95,6 +113,11 @@ int main()
         std::flush(std::cout);
         });
 
+#ifdef _WIN64
+    std::wcout << L"Waiting for 64-bit processes matching '" << processFilter << L"'" << std::endl;
+#else
+    std::wcout << L"Waiting for 32-bit processes matching '" << processFilter << L"'" << std::endl;
+#endif
     // Wait for key press to exit the program
     std::cout << "Press any key to terminate" << std::endl;
     while (!_kbhit()) {}
@@ -102,14 +125,46 @@ int main()
     return 0;
 }
 
-void EnsureVisible(HWND hwndListView, int itemIndex) {
-    SendMessage(hwndListView, LVM_ENSUREVISIBLE, (WPARAM)itemIndex, TRUE);
+void BringWindowToForeground(HWND hwnd) {
+    if (!hwnd) {
+        std::cerr << "Invalid window handle." << std::endl;
+        return;
+
+    }
+
+    // Show the window if it is minimized
+    if (IsIconic(hwnd)) {
+        ShowWindow(hwnd, SW_RESTORE);
+    }
+    else {
+        ShowWindow(hwnd, SW_SHOW);
+    }
+
+    // Bring the window to the foreground and set focus
+    SetForegroundWindow(hwnd);
+    SetFocus(hwnd);
 }
 
+
+void EnsureVisible(HWND hwndListView, int itemIndex) {
+
+    SendMessage(hwndListView, LVM_ENSUREVISIBLE, (WPARAM)itemIndex, TRUE);
+
+}
+
+
 bool ClickContextMenuItem(HWND hwndListView, const std::wstring& matchText) {
+
+    HWND hwndForeground = GetForegroundWindow();
+   
+    BringWindowToForeground(g_hwndMain);
+    
     int itemCount = GetListViewItemCount(hwndListView);
+    
     bool itemFound = false;
+    
     int itemIndex = -1;
+
 
     for (int i = 0; i < itemCount; ++i) {
         std::wstring itemText = GetListViewItemText(hwndListView, i, 1);  // 2nd column is index 1
@@ -204,6 +259,42 @@ bool ClickContextMenuItem(HWND hwndListView, const std::wstring& matchText) {
     inputs[5].ki.dwFlags = KEYEVENTF_KEYUP; // Key up event
 
     SendInput(6, inputs, sizeof(INPUT));
+
+    BringWindowToForeground(hwndForeground);
+    return true;
+}
+
+bool EnableDebugPrivilege()
+{
+    HANDLE hToken;
+
+    // Open a handle to the access token for the calling process.
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) {
+        std::cerr << "OpenProcessToken error: " << GetLastError() << std::endl;
+        return false;
+    }
+    TOKEN_PRIVILEGES tp;
+    LUID luid;
+
+    if (!LookupPrivilegeValue(NULL, SE_DEBUG_NAME, &luid)) {
+        std::cerr << "LookupPrivilegeValue error: " << GetLastError() << std::endl;
+        return false;
+    }
+
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Luid = luid;
+    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+
+    // Adjust Token Privileges
+    if (!AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), (PTOKEN_PRIVILEGES)NULL, (PDWORD)NULL)) {
+        std::cerr << "AdjustTokenPrivileges error: " << GetLastError() << std::endl;
+        return false;
+    }
+
+    if (GetLastError() == ERROR_NOT_ALL_ASSIGNED) {
+        std::cerr << "Unable to enable debug privilege. This is expected if not running elevated." << std::endl;
+        return false;
+    }
 
     return true;
 }
