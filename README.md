@@ -6,6 +6,6 @@ Use AutoAttachAPIMon_x86 c*.exe to monitor all new 32-bit processes matchingi th
 
 There is some delay before process monitoring starts, but much quicker than manually.
 
-While tools like TTD / Dtrace etc have eliminated many uses of API Mon, some things are just faster to work out with this tool.
+While tools like TTD / ttracer / Dtrace etc have eliminated many uses of API Mon, some things are just faster to work out with this tool.
 
 Build with Visual Studio 2022 with C++ / Windows SDK.
